@@ -1,0 +1,7 @@
+http://www.superfunadventurequesttime.com/projects/2013/weather_station/
+https://github.com/dekay/im-me/blob/master/pocketwx/src/protocol.txt
+http://www.wxforum.net/index.php?topic=22163.msg213244#msg213244
+https://github.com/dekay/DavisRFM69/wiki/Message-Protocol
+http://www.wxforum.net/index.php?topic=10739.0
+http://www.carluccio.de/davis-vue-hacking-part-2
+http://blog.scphillips.com/2013/07/getting-a-python-script-to-run-in-the-background-as-a-service-on-boot/

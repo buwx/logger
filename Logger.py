@@ -59,7 +59,7 @@ try:
         elif stage == 6 and len(line) > 3:
             sid = line[0]
             if sid == 'B' or sid == 'I' or sid == 'W' or sid == 'T' or sid == 'R' or sid == 'P':
-                cur.execute("INSERT INTO logger(sensor,data,description) VALUES(%s,%s,%s)", (sensor(line),formatData(line),description(line)))
+                cur.execute("INSERT INTO logger(dateTime,sensor,data,description) VALUES(UNIX_TIMESTAMP(CURRENT_TIMESTAMP()),%s,%s,%s)", (sensor(line),formatData(line),description(line)))
                 con.commit()
 
 except Exception, e:

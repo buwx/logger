@@ -2,4 +2,4 @@
 limit=20
 if [ $# -eq 1 ]; then limit=$1; fi
 
-echo "select ts as date,description as text from logger where sensor in ('T','N','G','H','B','S') order by id desc limit $limit;" | mysql -N --user=davis --password=davis davis
+echo "select from_unixtime(dateTime) as date,description as text from logger where sensor in ('T','N','G','H','B','S') order by id desc limit $limit;" | mysql -N --user=davis --password=davis davis

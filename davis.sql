@@ -1,11 +1,11 @@
 CREATE TABLE logger (
   id          INT NOT NULL AUTO_INCREMENT,
-  ts          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  datetime    INT NOT NULL DEFAULT 0,
   sensor      CHAR(1) NOT NULL,
   data        VARCHAR(80),
   description VARCHAR(80),
   PRIMARY KEY (id),
-  INDEX (ts),
+  INDEX (datetime),
   INDEX (sensor)
 );
 

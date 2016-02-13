@@ -15,10 +15,10 @@ con = None
 try:
     ssh = paramiko.SSHClient()
     ssh.load_system_host_keys()
-    ssh.connect('buchfink-consulting.de', username='micha')
+    ssh.connect('buwx.de', username='user')
 
     # retrieve last id
-    [stdin, stdout, stderr] = ssh.exec_command('echo "select max(id) from logger" | mysql -N --user=weewx --password=weewx weewx')
+    [stdin, stdout, stderr] = ssh.exec_command('echo "select max(id) from logger" | mysql -N --user=weewxuser --password=weewxpassword weewxdb')
     last_id = stdout.readline().strip()
     last_id = 0 if last_id == 'NULL' else int(last_id)
 
@@ -27,7 +27,7 @@ try:
     cur = con.cursor()
     cur.execute("SELECT id,datetime,sensor,data FROM logger WHERE id>%d ORDER BY id ASC" % (last_id))
 
-    [stdin, stdout, stderr] = ssh.exec_command('mysql -N --user=weewx --password=weewx weewx')
+    [stdin, stdout, stderr] = ssh.exec_command('mysql -N --user=weewxuser --password=weewxpassword weewxdb')
     for (the_id, datetime, sensor, data) in cur:
         print >> stdin, "INSERT INTO logger(id,datetime,sensor,data) VALUES(%d,%d,'%s','%s');" % (the_id, datetime, sensor, data)
 

@@ -5,3 +5,4 @@ https://github.com/dekay/DavisRFM69/wiki/Message-Protocol
 http://www.wxforum.net/index.php?topic=10739.0
 http://www.carluccio.de/davis-vue-hacking-part-2
 http://blog.scphillips.com/2013/07/getting-a-python-script-to-run-in-the-background-as-a-service-on-boot/
+https://github.com/tridge/DavisSi1000

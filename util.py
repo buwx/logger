@@ -39,6 +39,10 @@ def crc(data):
         crc = _update_crc(crc, int(data[idx], 16))
     return crc
 
+# Check line for crc
+def check(line):
+    return crc(line.split()) == 0
+
 # formats the line
 def formatData(line):
     data = line.split()
@@ -89,8 +93,12 @@ def description(line):
     data = line.split()
 
     # Pressure
-    if data[0] == 'B' and len(data) == 7:
-        p = round(math.pow(math.pow(float(data[4])/100.0, 0.1902614) + 8.417168e-05 * 310.5, 5.255927), 1)
+    if data[0] == 'A' and len(data) == 7:
+        p = round(float(data[4]) / 100.0, 2)
+        description = "p=" + str(p) + "hPa"
+
+    elif data[0] == 'B' and len(data) == 7:
+        p = round(math.pow(math.pow(float(data[4])/100.0, 0.1902614) + 8.417168e-05 * 310.17, 5.255927), 1)
         description = "p=" + str(p) + "hPa"
 
     elif data[0] == 'I' and crc(data) != 0:

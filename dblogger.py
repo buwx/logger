@@ -6,6 +6,7 @@ Created on 01.04.2016
 @author: micha
 '''
 
+import argparse
 import logging
 import math
 import time
@@ -19,7 +20,7 @@ from util import check, sensor, description
 
 PRESSURE_COUNT = 7  # number of pressure measurements
 LOOP_TIME = 60      # time between pressure messages in seconds
-LED_PIN = 22        # the GPIO-PIN of the flashing led
+LED_PIN = 11        # the GPIO-PIN (GPIO17) of the flashing led
 HEIGHT = 317.0      # the height of the sensor
 
 class DataLogger(object):
@@ -62,7 +63,7 @@ class DataLogger(object):
             message += " " + str(valid_messages)
             message += " " + str(lost_messages)
             logging.debug(message + " " + description(message))
-            self.store_message(message)
+            self.store_message(message, True)
 
     def sleep(self, target):
         while True:
@@ -74,32 +75,37 @@ class DataLogger(object):
             
     def shutdown(self):
         if self.con:
+            self.con.commit()
             self.con.close()
         if self.receiver:
             self.receiver.shutdown()
-        GPIO.cleanup()
 
     def process_message(self, message):
         if not check(message):
-            logging.debug("invalid message received: " + message + " " + description(message))
+            logging.warn("invalid message received: " + message + " " + description(message))
             return False
 
         GPIO.output(LED_PIN, True)
         logging.debug(message + " " + description(message))
-        self.store_message(message)
+        self.store_message(message, False)
 	time.sleep(0.1)
         GPIO.output(LED_PIN, False)
         return True
 
-    def store_message(self, message):
+    def store_message(self, message, commit):
         ts = int(time.time())
         self.cur.execute("INSERT INTO logger(dateTime,sensor,data,description) VALUES(%s,%s,%s,%s)", (ts,sensor(message),message,description(message)))
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
 # the main procedure
 
 if __name__ == "__main__":
-    logging.basicConfig(format='%(asctime)s\t%(levelname)s\t%(message)s', level=logging.INFO)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", help="more log output", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(format='%(asctime)s\t%(levelname)s\t%(message)s', level=logging.DEBUG if args.debug else logging.INFO)
     logging.info("Starting Davis-ISS logging")
 
     data_logger = None
@@ -111,5 +117,6 @@ if __name__ == "__main__":
         logging.critical(str(e))
 
     finally:
+        logging.info("Terminating Davis-ISS logging")
         if data_logger:
             data_logger.shutdown()

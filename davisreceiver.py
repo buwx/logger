@@ -15,7 +15,7 @@ import spidev
 IRQ_PIN = 16
 ISS_CHANNELS = [[0xD9, 0x04, 0x45], [0xD9, 0x13, 0x04], [0xD9, 0x21, 0xC2], [0xD9, 0x0B, 0xA4], [0xD9, 0x1A, 0x63]]
 
-TIMER_INTERVAL = 2.562
+TIMER_INTERVAL = 41.0/16
 MAX_HOPS = 60
 
 # RFM69 register names
@@ -116,6 +116,7 @@ class DavisReceiver(object):
         self.channel_index = 0
         self.valid_messages = 0
         self.lost_messages = 0
+	self.lock = False;
 
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(IRQ_PIN, GPIO.IN)
@@ -273,17 +274,20 @@ class DavisReceiver(object):
         self.hop()
 
     def interrupt_handler(self, pin):
-        RSSI = self.read_rssi()
         if self.mode == RF69_MODE_RX and self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY:
+            rssi = RSSI = self.read_rssi()
             a = self.spi.xfer2([REG_FIFO & 0x7f,0,0,0,0,0,0,0,0,0,0])[1:]
+            #rssi = RSSI = self.read_rssi()
             message = "I " + "%3d" % (100 + self.channel_index)
             for idx in range(8):
                 hex = "%02X" % (self.reverse_bits(a[idx]))
                 message += " " + hex
-            message += " %4s" % str(RSSI)
+            message += " %4s" % str(rssi)
             message += " %2d" % self.lost_messages
-            if self.handler:
+            if self.handler and not self.lock:
+                self.lock = True
                 if self.handler(message):
                     self.valid_messages += 1
                     self.lost_messages = 0
                     signal.setitimer(signal.ITIMER_REAL, TIMER_INTERVAL/2, TIMER_INTERVAL)
+                self.lock = False

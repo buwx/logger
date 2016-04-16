@@ -18,7 +18,7 @@ from util import check, description
 
 PRESSURE_COUNT = 7  # number of pressure measurements
 LOOP_TIME = 60      # time between pressure messages in seconds
-LED_PIN = 22        # the GPIO-PIN of the flashing led
+LED_PIN = 11        # the GPIO-PIN of the flashing led
 HEIGHT = 317.0      # the height of the sensor
 
 class DataLogger(object):

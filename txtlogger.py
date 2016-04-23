@@ -19,7 +19,7 @@ from util import check, description
 PRESSURE_COUNT = 7  # number of pressure measurements
 LOOP_TIME = 60      # time between pressure messages in seconds
 LED_PIN = 11        # the GPIO-PIN of the flashing led
-HEIGHT = 317.0      # the height of the sensor
+HEIGHT = 309.3      # the height of the sensor
 
 class DataLogger(object):
     def __init__(self):
@@ -51,6 +51,7 @@ class DataLogger(object):
             lost_messages = self.receiver.lost_messages
             valid_messages = self.receiver.valid_messages
             self.receiver.valid_messages = 0
+            self.receiver.lost_messages = 0
 
             message = "A " + str(int(round(temperature * 10, 0)))
             message += " " + str(int(round(pressure, 0)))

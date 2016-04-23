@@ -13,10 +13,12 @@ import RPi.GPIO as GPIO
 import spidev
 
 IRQ_PIN = 16
-ISS_CHANNELS = [[0xD9, 0x04, 0x45], [0xD9, 0x13, 0x04], [0xD9, 0x21, 0xC2], [0xD9, 0x0B, 0xA4], [0xD9, 0x1A, 0x63]]
+ISS_FREQUENCIES = [14222405, 14226180, 14229954, 14224292, 14228067] # frequency settings
 
 TIMER_INTERVAL = 41.0/16
-MAX_HOPS = 60
+MAX_HOPS = 12
+
+SENSIVITY = 185 # 180
 
 # RFM69 register names
 REG_FIFO          = 0x00
@@ -33,6 +35,8 @@ REG_OSC1          = 0x0A
 REG_RXBW          = 0x19
 REG_AFCBW         = 0x1A
 REG_AFCFEI        = 0x1E
+REG_FEIMSB        = 0x21
+REG_FEILSB        = 0x22
 REG_RSSIVALUE     = 0x24
 REG_DIOMAPPING1   = 0x25
 REG_IRQFLAGS1     = 0x27
@@ -46,8 +50,6 @@ REG_PACKETCONFIG1 = 0x37
 REG_PAYLOADLENGTH = 0x38
 REG_FIFOTHRESH    = 0x3C
 REG_PACKETCONFIG2 = 0x3D
-REG_TESTDAGC      = 0x6F
-REG_TESTAFC       = 0x71
 
 # RFM69 register values
 RF_OPMODE_SLEEP       = 0x00
@@ -78,7 +80,8 @@ RF_OSC1_RCCAL_START = 0x80
 RF_AFCFEI_AFCAUTOCLEAR_ON = 0x08
 RF_AFCFEI_AFCAUTO_ON      = 0x04
 
-RF_DIOMAPPING1_DIO0_01 = 0x40
+RF_DIOMAPPING1_DIO0_01 = 0x40 # PayloadReady
+RF_DIOMAPPING1_DIO0_11 = 0xC0 # Rssi
 
 RF_IRQFLAGS1_MODEREADY    = 0x80
 RF_IRQFLAGS2_PAYLOADREADY = 0x04
@@ -88,7 +91,8 @@ RF_SYNC_ON            = 0x80
 RF_SYNC_FIFOFILL_AUTO = 0x00
 RF_SYNC_SIZE_2        = 0x08
 RF_SYNC_TOL_0         = 0x00
-RF_SYNC_BYTE1_VALUE   = 0xcb
+
+RF_SYNC_BYTE1_VALUE   = 0xCB
 RF_SYNC_BYTE2_VALUE   = 0x89
 
 RF_PACKET1_FORMAT_FIXED      = 0x00
@@ -101,30 +105,44 @@ RF_PACKET2_RXRESTARTDELAY_2BITS = 0x10
 RF_PACKET2_AUTORXRESTART_ON     = 0x02
 RF_PACKET2_AES_OFF              = 0x00
 
-RF_DAGC_IMPROVED_LOWBETA0 = 0x30
-
 RF69_MODE_SLEEP   = 0
 RF69_MODE_STANDBY = 1
 RF69_MODE_SYNTH	  = 2
 RF69_MODE_RX      = 3
 RF69_MODE_TX	  = 4
 
+def reverse_bits(b):
+    b = ((b & 0b11110000) >>4 ) | ((b & 0b00001111) << 4)
+    b = ((b & 0b11001100) >>2 ) | ((b & 0b00110011) << 2)
+    b = ((b & 0b10101010) >>1 ) | ((b & 0b01010101) << 1)
+    return b
+
+def msb(b):
+    return (b & 0xff0000) >> 16
+
+def mid(b):
+    return (b & 0x00ff00) >> 8
+
+def lsb(b):
+    return b & 0x0000ff
+
 class DavisReceiver(object):
     def __init__(self):
         self.mode = None
         self.handler = None
-        self.channel_index = 0
+        self.freq_index = 0
         self.valid_messages = 0
         self.lost_messages = 0
+        self.hop_count = 1
 	self.lock = False;
+	self.fei_array = [-178, -8, 153, -87, 79]
 
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(IRQ_PIN, GPIO.IN)
 
         self.CONFIG = {
-          0x01: [REG_OPMODE, RF_OPMODE_STANDBY],
-          # Davis uses Gaussian shaping with BT=0.5
-          0x02: [REG_DATAMODUL, RF_DATAMODUL_MODULATIONSHAPING_10],
+          0x01: [REG_OPMODE, RF_OPMODE_STANDBY], # Standby
+          0x02: [REG_DATAMODUL, RF_DATAMODUL_MODULATIONSHAPING_10], # Packet Mode, FSK, Gaussian Filter, BT = 0.5
           # Davis uses a datarate of 19.2 KBPS
           0x03: [REG_BITRATEMSB, RF_BITRATEMSB_19200],
           0x04: [REG_BITRATELSB, RF_BITRATELSB_19200],
@@ -132,40 +150,29 @@ class DavisReceiver(object):
           0x05: [REG_FDEVMSB, RF_FDEVMSB_4800],
           0x06: [REG_FDEVLSB, RF_FDEVLSB_4800],
           # set channel frequency
-          0x07: [REG_FRFMSB, ISS_CHANNELS[self.channel_index][0]],
-          0x08: [REG_FRFMID, ISS_CHANNELS[self.channel_index][1]],
-          0x09: [REG_FRFLSB, ISS_CHANNELS[self.channel_index][2]],
+          0x07: [REG_FRFMSB, msb(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index])],
+          0x08: [REG_FRFMID, mid(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index])],
+          0x09: [REG_FRFLSB, lsb(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index])],
           # Use 25 kHz BW (BitRate < 2 * RxBw)
           0x19: [REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_4],
           # Use double the bandwidth during AFC as reception
           0x1a: [REG_AFCBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_3],
           0x1e: [REG_AFCFEI, RF_AFCFEI_AFCAUTOCLEAR_ON | RF_AFCFEI_AFCAUTO_ON],
-          # DIO0 is the only IRQ we're using
-          0x25: [REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01],
-          # Reset the FIFOs. Fixes a problem I had with bad first packet.
-          0x28: [REG_IRQFLAGS2, RF_IRQFLAGS2_FIFOOVERRUN],
-          #must be set to dBm = (-Sensitivity / 2) - default is 0xE4=228 so -114dBm
-          0x29: [REG_RSSITHRESH, 170],
+          0x25: [REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01], # map DIO0 to PayloadReady IRQ
+          0x29: [REG_RSSITHRESH, SENSIVITY], # Rssi Threshold
           # Davis has four preamble bytes 0xAAAAAAAA
-          0x2d: [REG_PREAMBLELSB, 4],
-          # Allow a couple erros in the sync word
+          0x2d: [REG_PREAMBLELSB, 4], 
+          # Sync detection on, FIFO filling condition 0, 2 sync words, no sync errors
           0x2e: [REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_2 | RF_SYNC_TOL_0],
-          # Davis ISS first sync byte. http://madscientistlabs.blogspot.ca/2012/03/first-you-get-sugar.html
-          0x2f: [REG_SYNCVALUE1, RF_SYNC_BYTE1_VALUE],
-          # Davis ISS second sync byte
-          0x30: [REG_SYNCVALUE2, RF_SYNC_BYTE2_VALUE],
+          0x2f: [REG_SYNCVALUE1, RF_SYNC_BYTE1_VALUE], # Davis first sync byte 0xCB
+          0x30: [REG_SYNCVALUE2, RF_SYNC_BYTE2_VALUE], # Davis second sync byte 0x89
           # Fixed packet length and we'll check our own CRC
           0x37: [REG_PACKETCONFIG1, RF_PACKET1_FORMAT_FIXED | RF_PACKET1_DCFREE_OFF |
                  RF_PACKET1_CRC_OFF | RF_PACKET1_CRCAUTOCLEAR_OFF | RF_PACKET1_ADRSFILTERING_OFF],
           # Davis sends 10 bytes of payload, including CRC that we check manually
           0x38: [REG_PAYLOADLENGTH, 10],
-          # TX on FIFO having more than nine bytes - we'll implement the re-transmit CR
-          0x3C: [REG_FIFOTHRESH, 0x09],
           # RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
           0x3d: [REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF],
-          0x6F: [REG_TESTDAGC, RF_DAGC_IMPROVED_LOWBETA0],
-          # AFC Offset for low mod index systems
-          0x71: [REG_TESTAFC , 0],
         }
 
         #initialize SPI
@@ -201,17 +208,17 @@ class DavisReceiver(object):
     def setmode(self, newMode):
         if newMode == self.mode:
             return
-
+        mask = self.read_register(REG_OPMODE) & 0xE3 # 11100011
         if newMode == RF69_MODE_TX:
-            self.write_register(REG_OPMODE, (self.read_register(REG_OPMODE) & 0xE3) | RF_OPMODE_TRANSMITTER)
+            self.write_register(REG_OPMODE, mask | RF_OPMODE_TRANSMITTER)
         elif newMode == RF69_MODE_RX:
-            self.write_register(REG_OPMODE, (self.read_register(REG_OPMODE) & 0xE3) | RF_OPMODE_RECEIVER)
+            self.write_register(REG_OPMODE, mask | RF_OPMODE_RECEIVER)
         elif newMode == RF69_MODE_SYNTH:
-            self.write_register(REG_OPMODE, (self.read_register(REG_OPMODE) & 0xE3) | RF_OPMODE_SYNTHESIZER)
+            self.write_register(REG_OPMODE, mask | RF_OPMODE_SYNTHESIZER)
         elif newMode == RF69_MODE_STANDBY:
-            self.write_register(REG_OPMODE, (self.read_register(REG_OPMODE) & 0xE3) | RF_OPMODE_STANDBY)
+            self.write_register(REG_OPMODE, mask | RF_OPMODE_STANDBY)
         elif newMode == RF69_MODE_SLEEP:
-            self.write_register(REG_OPMODE, (self.read_register(REG_OPMODE) & 0xE3) | RF_OPMODE_SLEEP)
+            self.write_register(REG_OPMODE, mask | RF_OPMODE_SLEEP)
         else:
             return
 
@@ -223,16 +230,13 @@ class DavisReceiver(object):
         self.mode = newMode;
 
     def read_rssi(self):
-        rssi = 0
-        rssi = self.read_register(REG_RSSIVALUE) * -1
-        rssi = rssi >> 1
-        return rssi
-
-    def reverse_bits(self, b):
-        b = ((b & 0b11110000) >>4 ) | ((b & 0b00001111) << 4)
-        b = ((b & 0b11001100) >>2 ) | ((b & 0b00110011) << 2)
-        b = ((b & 0b10101010) >>1 ) | ((b & 0b01010101) << 1)
-        return b
+        return -self.read_register(REG_RSSIVALUE) / 2
+    
+    def read_fei(self):
+        fei = (self.read_register(REG_FEIMSB) << 8) | self.read_register(REG_FEILSB)
+        if fei >= 32768:
+            fei = fei - 65536
+        return fei
 
     def calibration(self):
         self.write_register(REG_OSC1, RF_OSC1_RCCAL_START)
@@ -241,21 +245,24 @@ class DavisReceiver(object):
 
     def hop(self):
         logging.debug("hop")
-        self.channel_index += 1
-        if self.channel_index == len(ISS_CHANNELS):
-            self.channel_index = 0
-        self.write_register(REG_FRFMSB, ISS_CHANNELS[self.channel_index][0])
-        self.write_register(REG_FRFMID, ISS_CHANNELS[self.channel_index][1])
-        self.write_register(REG_FRFLSB, ISS_CHANNELS[self.channel_index][2])
+        self.freq_index += 1
+        if self.freq_index == len(ISS_FREQUENCIES):
+            self.freq_index = 0
+        self.write_register(REG_FRFMSB,
+            msb(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index]))
+        self.write_register(REG_FRFMID,
+            mid(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index]))
+        self.write_register(REG_FRFLSB,
+            lsb(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index]))
+        # optimized sequence from documentation 4.2.5
+        self.setmode(RF69_MODE_SYNTH)
+        self.setmode(RF69_MODE_RX)
 
     def sleep(self):
         self.setmode(RF69_MODE_SLEEP)
 
     def receive_begin(self):
-        if (self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY):
-            # avoid RX deadlocks
-            self.write_register(REG_PACKETCONFIG2, (self.read_register(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART)
-        #set DIO0 to "PAYLOADREADY" in receive mode
+        #set DIO0 to "PayloadRead" in receive mode
         self.write_register(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01)
         self.setmode(RF69_MODE_RX)
 
@@ -268,26 +275,30 @@ class DavisReceiver(object):
         self.handler = handler
 
     def signal_handler(self, signum, frame):
-        self.lost_messages += 1
-        if self.lost_messages >= MAX_HOPS:
+        self.hop_count += 1
+        if self.hop_count >= MAX_HOPS:
             signal.alarm(0)
+            self.freq_index = -1
         self.hop()
 
     def interrupt_handler(self, pin):
         if self.mode == RF69_MODE_RX and self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY:
-            rssi = RSSI = self.read_rssi()
             a = self.spi.xfer2([REG_FIFO & 0x7f,0,0,0,0,0,0,0,0,0,0])[1:]
-            #rssi = RSSI = self.read_rssi()
-            message = "I " + "%3d" % (100 + self.channel_index)
+            rssi = self.read_rssi()
+            fei = self.read_fei()
+            message = "I " + "%3d" % (100 + self.freq_index)
             for idx in range(8):
-                hex = "%02X" % (self.reverse_bits(a[idx]))
+                hex = "%02X" % reverse_bits(a[idx])
                 message += " " + hex
             message += " %4s" % str(rssi)
-            message += " %2d" % self.lost_messages
+            message += " %4s" % str(fei)
+            message += " %2d" % self.hop_count
             if self.handler and not self.lock:
                 self.lock = True
                 if self.handler(message):
+                    self.fei_array[self.freq_index] += fei
                     self.valid_messages += 1
-                    self.lost_messages = 0
+                    self.lost_messages += self.hop_count - 1
+                    self.hop_count = 0
                     signal.setitimer(signal.ITIMER_REAL, TIMER_INTERVAL/2, TIMER_INTERVAL)
                 self.lock = False

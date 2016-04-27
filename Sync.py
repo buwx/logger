@@ -8,28 +8,30 @@ Created on 14.03.2015
 
 import MySQLdb as mdb
 import paramiko
+import time
 
 # synchronize logger contents
 ssh = None
 con = None
+time.sleep(5)
 try:
     ssh = paramiko.SSHClient()
     ssh.load_system_host_keys()
     ssh.connect('buwx.de', username='user')
 
-    # retrieve last id
-    [stdin, stdout, stderr] = ssh.exec_command('echo "select max(id) from logger" | mysql -N --user=weewxuser --password=weewxpassword weewxdb')
-    last_id = stdout.readline().strip()
-    last_id = 0 if last_id == 'NULL' else int(last_id)
+    # retrieve last time stamp
+    [stdin, stdout, stderr] = ssh.exec_command('echo "select max(dateTime) from sensor" | mysql -N --user=weewx --password=weewx weewxdb')
+    last_time = stdout.readline().strip()
+    last_time = 0 if last_time == 'NULL' else int(last_time)
 
     # insert data
     con = mdb.connect('localhost', 'davis', 'davis', 'davis');
     cur = con.cursor()
-    cur.execute("SELECT id,datetime,sensor,data FROM logger WHERE id>%d ORDER BY id ASC" % (last_id))
+    cur.execute("SELECT dateTime,data FROM sensor WHERE dateTime>%d ORDER BY dateTime ASC" % (last_time))
 
-    [stdin, stdout, stderr] = ssh.exec_command('mysql -N --user=weewxuser --password=weewxpassword weewxdb')
-    for (the_id, datetime, sensor, data) in cur:
-        print >> stdin, "INSERT INTO logger(id,datetime,sensor,data) VALUES(%d,%d,'%s','%s');" % (the_id, datetime, sensor, data)
+    [stdin, stdout, stderr] = ssh.exec_command('mysql -N --user=weewx --password=weewx weewx')
+    for (date_time, data) in cur:
+        print >> stdin, "INSERT INTO sensor(dateTime,data) VALUES(%d,'%s');" % (date_time, data)
 
     stdin.close()
 

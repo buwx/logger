@@ -94,8 +94,8 @@ class DataLogger(object):
         return True
 
     def store_message(self, message, commit):
-        ts = int(time.time())
-        self.cur.execute("INSERT INTO logger(dateTime,sensor,data,description) VALUES(%s,%s,%s,%s)", (ts,sensor(message),message,description(message)))
+        ts = int(time.time()*1000)
+        self.cur.execute("INSERT INTO sensor(dateTime,sensor,data,description) VALUES(%s,%s,%s,%s)", (ts,sensor(message),message,description(message)))
         if commit:
             self.con.commit()
 

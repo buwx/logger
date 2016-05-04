@@ -13,12 +13,12 @@ import RPi.GPIO as GPIO
 import spidev
 
 IRQ_PIN = 16
-ISS_FREQUENCIES = [14222405, 14226180, 14229954, 14224292, 14228067] # frequency settings
+ISS_FREQUENCIES = [14222256, 14226191, 14230129, 14224227, 14228161] # frequency settings
 
 TIMER_INTERVAL = 41.0/16
 MAX_HOPS = 12
 
-SENSIVITY = 185 # 180
+SENSIVITY = 190
 
 # RFM69 register names
 REG_FIFO          = 0x00
@@ -50,6 +50,8 @@ REG_PACKETCONFIG1 = 0x37
 REG_PAYLOADLENGTH = 0x38
 REG_FIFOTHRESH    = 0x3C
 REG_PACKETCONFIG2 = 0x3D
+REG_TESTLNA       = 0x58
+REG_TESTDAGC      = 0x6F
 
 # RFM69 register values
 RF_OPMODE_SLEEP       = 0x00
@@ -135,7 +137,7 @@ class DavisReceiver(object):
         self.lost_messages = 0
         self.hop_count = 1
 	self.lock = False;
-	self.fei_array = [-178, -8, 153, -87, 79]
+	self.fei_array = [0, 0, 0, 0, 0]
 
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(IRQ_PIN, GPIO.IN)
@@ -173,6 +175,10 @@ class DavisReceiver(object):
           0x38: [REG_PAYLOADLENGTH, 10],
           # RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
           0x3d: [REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF],
+          # SensitivityBoost
+          0x58: [REG_TESTLNA, 0x2d],
+          # Improved margin
+          0x6f: [REG_TESTDAGC, 0x30],
         }
 
         #initialize SPI

@@ -9,8 +9,9 @@ Created on 01.04.2016
 import argparse
 import logging
 import math
+import threading
 import time
-import MySQLdb as mdb
+import pymysql as mdb
 
 import RPi.GPIO as GPIO
 import Adafruit_BMP.BMP085 as BMP085
@@ -28,11 +29,12 @@ class DataLogger(object):
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(LED_PIN, GPIO.OUT)
 
-        self.con = mdb.connect('localhost', 'davis', 'davis', 'davis');
+        self.con = mdb.connect('localhost', 'davis', 'davis', 'davis', charset='latin1');
         self.cur = self.con.cursor()
         self.bmp_sensor = BMP085.BMP085(mode=BMP085.BMP085_ULTRAHIGHRES)
         self.receiver = DavisReceiver()
         self.receiver.set_handler(self.process_message)
+        self.lock = threading.Lock()
 
     def loop(self):
         self.receiver.calibration()
@@ -94,10 +96,11 @@ class DataLogger(object):
         return True
 
     def store_message(self, message, commit):
-        ts = int(time.time()*1000)
-        self.cur.execute("INSERT INTO sensor(dateTime,sensor,data,description) VALUES(%s,%s,%s,%s)", (ts,sensor(message),message,description(message)))
-        if commit:
-            self.con.commit()
+        with self.lock:
+            ts = int(time.time()*1000)
+            self.cur.execute("INSERT INTO sensor(dateTime,sensor,data,description) VALUES(%s,%s,%s,%s)", (ts,sensor(message),message,description(message)))
+            if commit:
+                self.con.commit()
 
 # the main procedure
 

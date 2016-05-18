@@ -7,7 +7,7 @@ Created on 01.04.2016
 '''
 
 import logging
-import signal
+import threading
 
 import RPi.GPIO as GPIO
 import spidev
@@ -128,6 +128,46 @@ def mid(b):
 def lsb(b):
     return b & 0x0000ff
 
+class Timer(threading.Thread):
+    def __init__(self, delay, callback):
+        threading.Thread.__init__(self)
+        self.delay = delay
+        self.callback = callback
+        self.condition = threading.Condition()
+        self.active = True
+        self.reset = False
+        self.daemon = True
+
+    def run(self):
+        while self.active:
+            self.reset = False
+            self.wait()
+            self.do_callback()
+            self.wait()
+
+    def wait(self):
+        with self.condition:
+            if not self.reset:
+                self.condition.wait(self.delay)
+
+    def do_callback(self):
+        with self.condition:
+            if self.callback and not self.reset:
+                self.callback()
+
+    def cancel(self):
+        with self.condition:
+            self.active = False
+            self.callback = None
+            self.condition.notify()
+        self.join()
+
+    def restart(self, callback):
+        with self.condition:
+            self.callback = callback
+            self.reset = True
+            self.condition.notify()
+
 class DavisReceiver(object):
     def __init__(self):
         self.mode = None
@@ -181,29 +221,31 @@ class DavisReceiver(object):
           0x6f: [REG_TESTDAGC, 0x30],
         }
 
-        #initialize SPI
+        # initialize timer for channel hopping
+        self.timer = Timer(TIMER_INTERVAL/2, None)
+
+        # initialize SPI
         self.spi = spidev.SpiDev()
         self.spi.open(0, 0)
         self.spi.max_speed_hz = 4000000
 
-        #verify chip is syncing?
+        # verify chip is syncing?
         while self.read_register(REG_SYNCVALUE1) != RF_SYNC_BYTE1_VALUE:
             self.write_register(REG_SYNCVALUE1, RF_SYNC_BYTE1_VALUE)
 
         while self.read_register(REG_SYNCVALUE1) != RF_SYNC_BYTE2_VALUE:
             self.write_register(REG_SYNCVALUE1, RF_SYNC_BYTE2_VALUE)
 
-        #write config
+        # write config
         for value in self.CONFIG.values():
             self.write_register(value[0], value[1])
 
-        # Wait for ModeReady
+        # wait for ModeReady
         while (self.read_register(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00:
             pass
 
         GPIO.remove_event_detect(IRQ_PIN)
         GPIO.add_event_detect(IRQ_PIN, GPIO.RISING, callback=self.interrupt_handler)
-        signal.signal(signal.SIGALRM, self.signal_handler)
 
     def read_register(self, addr):
         return self.spi.xfer([addr & 0x7F, 0])[1]
@@ -271,19 +313,21 @@ class DavisReceiver(object):
         #set DIO0 to "PayloadRead" in receive mode
         self.write_register(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01)
         self.setmode(RF69_MODE_RX)
+        self.timer.start()
 
     def shutdown(self):
-        signal.alarm(0)
+        self.timer.cancel()
         self.sleep()
         GPIO.cleanup()
 
     def set_handler(self, handler):
         self.handler = handler
 
-    def signal_handler(self, signum, frame):
+    def timer_handler(self):
         self.hop_count += 1
         if self.hop_count >= MAX_HOPS:
-            signal.alarm(0)
+            # disable channel hopping
+            self.timer.callback = None
             self.freq_index = -1
         self.hop()
 
@@ -299,12 +343,11 @@ class DavisReceiver(object):
             message += " %4s" % str(rssi)
             message += " %4s" % str(fei)
             message += " %2d" % self.hop_count
-            if self.handler and not self.lock:
-                self.lock = True
+            if self.handler:
                 if self.handler(message):
                     self.fei_array[self.freq_index] += fei
                     self.valid_messages += 1
                     self.lost_messages += self.hop_count - 1
                     self.hop_count = 0
-                    signal.setitimer(signal.ITIMER_REAL, TIMER_INTERVAL/2, TIMER_INTERVAL)
-                self.lock = False
+                    # adjust channel hopping
+                    self.timer.restart(self.timer_handler)

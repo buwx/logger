@@ -8,15 +8,17 @@ Created on 01.04.2016
 
 import logging
 import threading
+import time
 
 import RPi.GPIO as GPIO
 import spidev
 
 IRQ_PIN = 16
 ISS_FREQUENCIES = [14222256, 14226191, 14230129, 14224227, 14228161] # frequency settings
+ISS_CHANNELS = len(ISS_FREQUENCIES)
 
 TIMER_INTERVAL = 41.0/16
-MAX_HOPS = 12
+MAX_HOPS = 8
 
 SENSIVITY = 190
 
@@ -135,25 +137,40 @@ class Timer(threading.Thread):
         self.callback = callback
         self.condition = threading.Condition()
         self.active = True
-        self.reset = False
+        self.calibrated = False
+        self.timestamp = 0
+        self.freq_index = 0
         self.daemon = True
 
     def run(self):
-        while self.active:
-            self.reset = False
-            self.wait()
-            self.do_callback()
-            self.wait()
+        with self.condition:
+            while self.active:
+                logging.debug("run start")
+                self.wait()
+                self.do_callback()
 
     def wait(self):
-        with self.condition:
-            if not self.reset:
-                self.condition.wait(self.delay)
+        delay = self.delay
+        if self.timestamp > 0:
+            current = time.time()
+            n = int((current - self.timestamp) / self.delay)
+            if self.calibrated:
+                self.calibrated = False
+                n = 0.25
+            else:
+                n += 1.75
+            delay = self.timestamp + n * self.delay - current
+            if delay < 0.05:
+                delay = 0.05
+
+        logging.debug("wait " + str(delay))
+        self.condition.wait(delay)
 
     def do_callback(self):
-        with self.condition:
-            if self.callback and not self.reset:
-                self.callback()
+        if self.callback and not self.calibrated:
+            current = time.time()
+            frac = (1 + self.freq_index + (current - self.timestamp) / self.delay) % ISS_CHANNELS
+            self.callback(int(frac))
 
     def cancel(self):
         with self.condition:
@@ -162,11 +179,13 @@ class Timer(threading.Thread):
             self.condition.notify()
         self.join()
 
-    def restart(self, callback):
-        with self.condition:
-            self.callback = callback
-            self.reset = True
-            self.condition.notify()
+    def calibrate(self, callback, timestamp, freq_index):
+        self.callback = callback
+        self.timestamp = timestamp
+        self.freq_index = freq_index
+        self.calibrated = True
+        logging.debug("notify")
+        self.condition.notify()
 
 class DavisReceiver(object):
     def __init__(self):
@@ -221,8 +240,8 @@ class DavisReceiver(object):
           0x6f: [REG_TESTDAGC, 0x30],
         }
 
-        # initialize timer for channel hopping
-        self.timer = Timer(TIMER_INTERVAL/2, None)
+        # initialize timer
+        self.timer = Timer(TIMER_INTERVAL, None)
 
         # initialize SPI
         self.spi = spidev.SpiDev()
@@ -291,11 +310,9 @@ class DavisReceiver(object):
         while self.read_register(REG_OSC1) & RF_OSC1_RCCAL_DONE == 0x00:
             pass
 
-    def hop(self):
-        logging.debug("hop")
-        self.freq_index += 1
-        if self.freq_index == len(ISS_FREQUENCIES):
-            self.freq_index = 0
+    def hop(self, freq_index):
+        self.freq_index = freq_index
+        logging.debug("hop (10" + str(self.freq_index) + ")")
         self.write_register(REG_FRFMSB,
             msb(ISS_FREQUENCIES[self.freq_index] + self.fei_array[self.freq_index]))
         self.write_register(REG_FRFMID,
@@ -323,20 +340,21 @@ class DavisReceiver(object):
     def set_handler(self, handler):
         self.handler = handler
 
-    def timer_handler(self):
+    def timer_handler(self, freq_index):
         self.hop_count += 1
         if self.hop_count >= MAX_HOPS:
-            # disable channel hopping
             self.timer.callback = None
-            self.freq_index = -1
-        self.hop()
+            freq_index = 0
+        self.hop(freq_index)
 
     def interrupt_handler(self, pin):
         if self.mode == RF69_MODE_RX and self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY:
+            timestamp = time.time()
+            freq_index = self.freq_index
             a = self.spi.xfer2([REG_FIFO & 0x7f,0,0,0,0,0,0,0,0,0,0])[1:]
             rssi = self.read_rssi()
             fei = self.read_fei()
-            message = "I " + "%3d" % (100 + self.freq_index)
+            message = "I " + "%3d" % (100 + freq_index)
             for idx in range(8):
                 hex = "%02X" % reverse_bits(a[idx])
                 message += " " + hex
@@ -345,9 +363,9 @@ class DavisReceiver(object):
             message += " %2d" % self.hop_count
             if self.handler:
                 if self.handler(message):
-                    self.fei_array[self.freq_index] += fei
-                    self.valid_messages += 1
-                    self.lost_messages += self.hop_count - 1
-                    self.hop_count = 0
-                    # adjust channel hopping
-                    self.timer.restart(self.timer_handler)
+                    with self.timer.condition:
+                        self.fei_array[freq_index] += fei
+                        self.valid_messages += 1
+                        self.lost_messages += self.hop_count - 1
+                        self.hop_count = 0
+                        self.timer.calibrate(self.timer_handler, timestamp, freq_index)

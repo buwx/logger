@@ -6,6 +6,7 @@ Created on 01.04.2016
 @author: micha
 '''
 
+import argparse
 import logging
 import math
 import time
@@ -88,7 +89,11 @@ class DataLogger(object):
 # the main procedure
 
 if __name__ == "__main__":
-    logging.basicConfig(format='%(asctime)s\t%(levelname)s\t%(message)s', level=logging.INFO)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", help="more log output", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(format='%(asctime)s\t%(levelname)s\t%(message)s', level=logging.DEBUG if args.debug else logging.INFO)
     logging.info("Starting Davis-ISS logging")
 
     data_logger = None

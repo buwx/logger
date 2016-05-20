@@ -145,7 +145,6 @@ class Timer(threading.Thread):
     def run(self):
         with self.condition:
             while self.active:
-                logging.debug("run start")
                 self.wait()
                 self.do_callback()
 
@@ -341,29 +340,30 @@ class DavisReceiver(object):
         self.handler = handler
 
     def timer_handler(self, freq_index):
-        self.hop_count += 1
-        if self.hop_count >= MAX_HOPS:
-            self.timer.callback = None
-            freq_index = 0
-        self.hop(freq_index)
+        with self.timer.condition:
+            self.hop_count += 1
+            if self.hop_count >= MAX_HOPS:
+                self.timer.callback = None
+                freq_index = 0
+            self.hop(freq_index)
 
     def interrupt_handler(self, pin):
-        if self.mode == RF69_MODE_RX and self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY:
-            timestamp = time.time()
-            freq_index = self.freq_index
-            a = self.spi.xfer2([REG_FIFO & 0x7f,0,0,0,0,0,0,0,0,0,0])[1:]
-            rssi = self.read_rssi()
-            fei = self.read_fei()
-            message = "I " + "%3d" % (100 + freq_index)
-            for idx in range(8):
-                hex = "%02X" % reverse_bits(a[idx])
-                message += " " + hex
-            message += " %4s" % str(rssi)
-            message += " %4s" % str(fei)
-            message += " %2d" % self.hop_count
-            if self.handler:
-                if self.handler(message):
-                    with self.timer.condition:
+        with self.timer.condition:
+            if self.mode == RF69_MODE_RX and self.read_register(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY:
+                timestamp = time.time()
+                freq_index = self.freq_index
+                a = self.spi.xfer2([REG_FIFO & 0x7f,0,0,0,0,0,0,0,0,0,0])[1:]
+                rssi = self.read_rssi()
+                fei = self.read_fei()
+                message = "I " + "%3d" % (100 + freq_index)
+                for idx in range(8):
+                    hex = "%02X" % reverse_bits(a[idx])
+                    message += " " + hex
+                message += " %4s" % str(rssi)
+                message += " %4s" % str(fei)
+                message += " %2d" % self.hop_count
+                if self.handler:
+                    if self.handler(message):
                         self.fei_array[freq_index] += fei
                         self.valid_messages += 1
                         self.lost_messages += self.hop_count - 1

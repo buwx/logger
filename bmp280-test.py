@@ -16,9 +16,9 @@ if __name__ == "__main__":
 
     try:
         bmp = BMP280()
-        print 'temperature: ' + bmp.read_temperature()
-        print 'pressure: ' + bmp.read_pressure()/100.0
-        print 'altitude: ' + bmp.read_altitude()
-        print 'sealevel pressure: ' + bmp.read_sealevel_pressure(310.0)/100.0
+        print 'temperature: ' + str(bmp.read_temperature())
+        print 'pressure: ' + str(bmp.read_pressure()/100.0)
+        print 'altitude: ' + str(bmp.read_altitude())
+        print 'sealevel pressure: ' + str(bmp.read_sealevel_pressure(310.0)/100.0)
     except Exception, e:
         logging.critical(str(e))

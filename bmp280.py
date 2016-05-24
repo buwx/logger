@@ -186,9 +186,9 @@ class BMP280(object):
         pressure = 1048576.0 - raw_press
         # avoid exception caused by division by zero
         if v_x1 != 0.0:
-            self._logger.warning('invalid pressure')
             pressure = (pressure - v_x2 / 4096.0) * 6250.0 / v_x1;
-        else
+        else:
+            self._logger.warning('invalid pressure')
             return 0.0; # invalid pressure
 
         v_x1 = self._dig_P9 * pressure * pressure / 2147483648.0
